@@ -1,0 +1,27 @@
+{
+  "name": "pdcaw",
+  "version": "0.1.0",
+  "description": "PDCA 문서를 워크스페이스 서버에 동기화하는 CLI. 본문은 파일 그대로 전송되어 LLM 컨텍스트를 통과하지 않는다.",
+  "type": "module",
+  "bin": {
+    "pdcaw": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
+    "test": "vitest run",
+    "lint": "oxlint"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "oxlint": "^1.75.0",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.10"
+  }
+}

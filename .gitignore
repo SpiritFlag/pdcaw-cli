@@ -1,0 +1,39 @@
+# 의존성
+node_modules
+
+# 빌드 산출물 — dist는 npm 배포판에만 들어간다(prepublishOnly로 생성)
+dist
+*.tsbuildinfo
+
+# 환경변수 — PDCAW_PAT가 여기 산다. 절대 커밋 금지
+.env*
+!.env.local.example
+
+# 로그
+logs
+*.log
+npm-debug.log*
+
+# 테스트·패키징 산출물
+coverage
+*.tgz
+
+# 임시 파일
+# - *.tmp: RULE.md의 질문 파일(답을 받고 삭제하는 용도)
+# - /*.txt: 사이클 종료 절차 7번의 태그 간 diff 산출물(커밋하지 않음)
+*.tmp
+/*.txt
+
+# 개인 규칙 파일 — 전역 ~/.claude/CLAUDE.md 로 이동함.
+# 프로젝트 전용 규칙이 필요해지면 이 줄을 지우고 커밋할 것.
+CLAUDE.md
+
+# 에디터·OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.sw?
+
+# 주의: .pdcarc.json 은 커밋 대상이다(projectId·baseUrl만 담고 PAT는 넣지 않는다).
+# 여기에 추가하지 말 것.

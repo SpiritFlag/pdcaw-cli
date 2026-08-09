@@ -1,0 +1,5 @@
+# PDCA Index
+
+| Feature | Match Rate | 완료일 | Documents |
+|---------|:----------:|--------|-----------|
+| [extract-docs-upload-cli](2026-08/extract-docs-upload-cli/) | 96% | 2026-08-09 | plan, design, analysis, report — **최초 사이클, `v0.1.0` 예정.** PDCA-workspace 7차 사이클(`refine-cycle-closing`)의 산출물인 `scripts/docs-upload.ts`를 독립 npm 패키지 `pdcaw`로 이식 — 원본 순수 로직(파서·git 해석·MCP 클라이언트)은 무수정 복사, 신규 모듈 4개(`root`·`config`·`targets`·`classify`)로 레포 결합을 끊었다. 착수 실측 중 형이 지적한 두 가지가 스코프를 "이식"에서 "이식+확장"으로 바꿨다 — ①동기화 대상을 `docs/PDCA`에서 `docs/` 전체로 확대(서버가 이미 지원하는 `kind='general'`을 원본이 못 쓰고 있었을 뿐, F5·F6) ②호출자가 이미 아는 git diff 결과를 그대로 받는 `--path` 핀포인트 업로드 신설. Design에서 형이 클로드 권고(실용 절충)를 뒤집고 완전 분리(Option B) 선택 — 무회귀 증거를 구조 대조 대신 "의도된 행위 차이 9건" 목록에 의한 행위 대조로 성립시켰다. dev 서버 대상 종단 검증에서 서버 상태(`document_read`)까지 직접 대조해 `kind`·`pdcaStage`·`title` 필드를 실증했고, 그 과정에서 실측 3건(프로덕션 기본 base-url, dev PAT-프로젝트 불일치, `--path`+`--version` 배타로 인한 대체 실행)을 발견·대응. Check 단계에서 Design 문서와 코드를 줄 단위로 재대조해 GAP-1(Important — `--path` 상대경로가 Design의 cwd 기준이 아니라 repoRoot 기준으로 구현됨)을 발견, Checkpoint 5에서 즉시 수정하고 회귀 테스트(p5)로 확정. 테스트 19(이식 무회귀)→50개(신규 로직 커버리지 포함) 전건 green. Success Criteria 10/10 Met |
