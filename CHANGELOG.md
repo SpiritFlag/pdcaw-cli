@@ -5,6 +5,25 @@ All notable changes to this project are documented here. Format loosely follows
 — a breaking change to the `.pdcarc` schema or CLI argument surface is a major bump
 (see [README.md](README.md#governance)).
 
+## v0.2.0 — 2026-08-09
+
+**Breaking**: `PDCAW_BASE_URL` no longer has a built-in default. Now that `pdcaw` is
+published to npm, a hardcoded fallback to a specific production server misrepresented it
+as a general-purpose tool — it is a client for a self-hosted PDCA-workspace server and has
+never worked without one.
+
+### Changed
+
+- `baseUrl` is now required, exactly like `PDCAW_PAT` — if it's missing from CLI
+  flag/env var/`.pdcarc.json`, `pdcaw` exits with a config error instead of silently
+  falling back to a production URL.
+- When both `PDCAW_PAT` and `baseUrl` are missing, the error message lists both at once
+  (previously only the first missing field was reported, requiring a fix-and-rerun cycle
+  to discover the second).
+- `README.md`, `.pdcarc.example.json`, `.env.local.example` updated to reflect the
+  required, no-default `baseUrl` contract; example values no longer reference the author's
+  own production server.
+
 ## v0.1.0 — 2026-08-09
 
 Initial release. Extracted from PDCA-workspace's `scripts/docs-upload.ts` (7th cycle,
