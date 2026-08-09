@@ -5,6 +5,11 @@ PDCA-workspace server. File contents are read straight from disk and sent as-is 
 never pass through an LLM context, so uploading a batch of design docs costs no tokens
 and introduces no risk of retyping errors.
 
+> **This is a client for a self-hosted [PDCA-workspace](https://github.com/SpiritFlag/PDCA-workspace)
+> server — not a general-purpose upload tool.** Installing it gets you nothing without
+> your own server instance and a PAT issued by that server. There is no built-in default
+> server; `PDCAW_BASE_URL` must be set explicitly.
+
 ## Usage
 
 No install needed — run it with `npx`:
@@ -48,7 +53,7 @@ cp .env.local.example .env.local
 ```
 PDCAW_PAT=pdcaw_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 PDCAW_PROJECT_ID=00000000-0000-0000-0000-000000000000   # optional
-PDCAW_BASE_URL=http://localhost:3001                      # optional, defaults to prod
+PDCAW_BASE_URL=https://your-pdca-workspace.example.com    # required, no default
 ```
 
 A PAT is tied to one server (Neon branch) — a token issued on dev won't authenticate
@@ -63,13 +68,14 @@ cp .pdcarc.example.json .pdcarc.json
 ```json
 {
   "projectId": "00000000-0000-0000-0000-000000000000",
-  "baseUrl": "https://pdca-workspace.vercel.app"
+  "baseUrl": "https://your-pdca-workspace.example.com"
 }
 ```
 
-**Resolution order**: CLI flag > `PDCAW_*` env var > `.pdcarc.json` > built-in default (base
-URL only — project id falls back to auto-detection via the server's project list when
-exactly one project is accessible).
+**Resolution order**: CLI flag > `PDCAW_*` env var > `.pdcarc.json`. There is no built-in
+default for `baseUrl` — if it's missing from all three sources, `pdcaw` exits with a
+config error instead of guessing. `projectId` is the only field that falls back further,
+to auto-detection via the server's project list when exactly one project is accessible.
 
 The PAT itself is **never** read from `.pdcarc.json` — only `PDCAW_PAT`. If `.pdcarc.json`
 contains a `pat`/`token` key it is ignored with a warning, and its value is never printed.
