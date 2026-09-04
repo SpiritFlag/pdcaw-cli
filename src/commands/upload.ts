@@ -1,19 +1,23 @@
-// Design Ref: §2.1·§2.2·§5·§6 — 오케스트레이션. 자체 로직은 두지 않고 lib/*를 순서대로
-// 호출한다(원본 Design Ref 관례 계승 — 파싱·해석 로직은 lib에 있다).
-// 원본: PDCA-workspace scripts/docs-upload.ts. 의도된 행위 차이 전수는 Design §2.4 참조.
-import { readFile } from 'node:fs/promises'
+// pdcaw upload — 오케스트레이션. 자체 로직은 두지 않고 lib/*를 순서대로 호출한다.
+import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { classify } from '../lib/classify.ts'
 import { ConfigError, resolveConfig } from '../lib/config.ts'
+import { listCycleDirs, pickCycleDirByVersion } from '../lib/cycle-dir.ts'
+import { isVersion } from '../lib/cycle-path.ts'
 import { loadEnvFileIfPresent, resolveRepoRoot } from '../lib/root.ts'
 import { GitDetectionError, TargetsError, resolveTargets } from '../lib/targets.ts'
 import type { ChangedPath } from '../lib/git-changes.ts'
+import { updateCycle } from '../lib/rest.ts'
 import { callTool, createCycle, resolveProjectId } from '../lib/workspace-api.ts'
 import type { Api } from '../lib/workspace-api.ts'
 
 const USAGE =
-  'usage: pdcaw upload [--cycle <이름>] [--version vX.Y.Z] [--all]\n' +
-  '                     [--path <파일|폴더>]... [--project <uuid>] [--base-url <url>]'
+  'usage: pdcaw upload [--version vX.Y.Z] [--all]\n' +
+  '                    [--path <파일|폴더>]... [--project <uuid>] [--base-url <url>]\n' +
+  '\n' +
+  '  --version: docs/PDCA/*/{version}-*/ 폴더를 찾아 릴리즈를 만들고(있으면 재사용),\n' +
+  '             변경 문서를 올린 뒤 그 폴더의 *.release.md를 릴리즈노트로 설정한다.'
 
 export class UsageError extends Error {}
 
@@ -24,7 +28,6 @@ function fail(message: string): never {
 // ── 인자 파싱 ────────────────────────────────────────────────────────────────
 
 type Args = {
-  cycle?: string
   version?: string
   all: boolean
   path: string[]
@@ -43,9 +46,6 @@ export function parseArgs(argv: string[]): Args {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     switch (arg) {
-      case '--cycle':
-        args.cycle = requireValue(argv, ++i, arg)
-        break
       case '--version':
         args.version = requireValue(argv, ++i, arg)
         break
@@ -61,19 +61,19 @@ export function parseArgs(argv: string[]): Args {
       case '--base-url':
         args.baseUrl = requireValue(argv, ++i, arg)
         break
+      case '--cycle':
+        fail('--cycle 은 없어졌습니다. 릴리즈는 --version 만으로 폴더를 찾고, 부분 동기화는 --path 를 쓰세요')
+        break
       default:
         fail(`알 수 없는 옵션: ${arg}\n${USAGE}`)
     }
   }
-  if (args.version && !/^v\d+\.\d+\.\d+$/.test(args.version)) {
+  if (args.version && !isVersion(args.version)) {
     fail(`--version은 v0.1.0 형식이어야 합니다: ${args.version}`)
   }
-  if (args.version && !args.cycle) {
-    fail(`--version은 --cycle과 함께 지정해야 합니다\n${USAGE}`)
-  }
-  // Design D-12 — --path는 완전 배타. 조합이 필요해지면 나중에 허용으로 푼다(역방향은 호환 파괴).
-  if (args.path.length > 0 && (args.all || args.cycle || args.version)) {
-    fail(`--path는 --all/--cycle/--version과 함께 쓸 수 없습니다\n${USAGE}`)
+  // --path는 완전 배타. 조합이 필요해지면 나중에 허용으로 푼다(역방향은 호환 파괴).
+  if (args.path.length > 0 && (args.all || args.version)) {
+    fail(`--path는 --all/--version과 함께 쓸 수 없습니다\n${USAGE}`)
   }
   return args
 }
@@ -82,10 +82,8 @@ export function parseArgs(argv: string[]): Args {
 
 type UploadTarget = ChangedPath
 
-// FR-78(역파싱 실패는 사유와 함께 건너뜀) · FR-88(삭제·rename은 경고만, 서버 요청 없음)
-// Design §2.4 ②: 파서 비매칭이어도 skip하지 않는다 — classify()가 general로 흡수한다.
-// 사이클 필터(cycleFilter)는 파일을 열어야 아는 정보(title)에 걸리므로 여기서 적용하지
-// 않고, classify() 이후(main)에서 적용한다.
+// 삭제·rename은 경고만(서버 요청 없음). 파서 비매칭이어도 skip하지 않는다 — classify()가
+// general로 흡수한다. 질문 파일(*.qN.md)은 사이클 폴더에 남아 있으면 안 되는 파일이라 경고한다.
 function selectTargets(changes: ChangedPath[]): UploadTarget[] {
   const targets: UploadTarget[] = []
   for (const change of changes) {
@@ -101,37 +99,18 @@ function selectTargets(changes: ChangedPath[]): UploadTarget[] {
       console.log(`  skip  ${change.path} — .md 아님`)
       continue
     }
+    if (/\.q\d+\.md$/.test(change.path)) {
+      console.log(`  warn  질문 파일 잔존: ${change.path} — 답을 반영하고 지워야 할 파일입니다 (그대로 general로 올라감)`)
+    }
     targets.push({ ...change })
   }
   return targets
 }
 
-// D-64 — 연월은 --cycle과 일치하는 변경 문서의 분류 결과에서 얻는다. 두 연월에 걸쳐
-// 있으면 모호하므로 중단한다(자동 선택하지 않음). 원본 resolveCycleYearMonth 계승.
-function resolveCycleYearMonth(
-  targets: Array<{ info: ReturnType<typeof classify> }>,
-  cycleName: string,
-): string {
-  const months = new Set(
-    targets
-      .map((t) => t.info)
-      .filter((info) => info.kind === 'pdca' && info.title === cycleName)
-      .map((info) => (info as { yearMonth: string }).yearMonth),
-  )
-  if (months.size === 0) {
-    fail(`--cycle ${cycleName}에 해당하는 변경 문서를 찾을 수 없어 연월을 알 수 없습니다`)
-  }
-  if (months.size > 1) {
-    fail(`--cycle ${cycleName}이 여러 연월(${[...months].join(', ')})에 걸쳐 있어 모호합니다`)
-  }
-  return [...months][0]
-}
-
 // ── 메인 ────────────────────────────────────────────────────────────────────
 
 export async function main(argv: string[]): Promise<void> {
-  // --help/-h는 파싱·설정 해석보다 먼저 처리한다 — 알 수 없는 옵션(fail)으로 떨어지거나
-  // PAT·루트 판정을 요구하지 않아야 순수 도움말 조회가 성립한다.
+  // --help/-h는 파싱·설정 해석보다 먼저 처리한다.
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log(USAGE)
     return
@@ -156,6 +135,18 @@ export async function main(argv: string[]): Promise<void> {
   const api: Api = { baseUrl: config.baseUrl, pat: config.pat }
   console.log(`→ ${api.baseUrl}`)
 
+  // --version이면 서버 요청 전에 로컬 폴더부터 확정한다 — 없으면 아무것도 올리지 않는다.
+  let cycleDir: { dir: string; stem: string; name: string } | undefined
+  if (args.version) {
+    const dirs = await listCycleDirs(repoRoot.root)
+    try {
+      cycleDir = pickCycleDirByVersion(dirs, args.version)
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err))
+    }
+    console.log(`사이클 폴더: ${cycleDir.dir}`)
+  }
+
   let baseTag: string | undefined
   let changes: ChangedPath[]
   let skipped: string[]
@@ -175,7 +166,7 @@ export async function main(argv: string[]): Promise<void> {
       skipped = result.skipped
     }
   } catch (err) {
-    if (err instanceof GitDetectionError) fail(err.message) // FR-86
+    if (err instanceof GitDetectionError) fail(err.message)
     if (err instanceof TargetsError) fail(err.message)
     throw err
   }
@@ -187,44 +178,39 @@ export async function main(argv: string[]): Promise<void> {
     console.log(args.all ? '기준: --all (docs/ 전체)' : `기준: ${baseTag} 이후 + 작업트리`)
   }
 
-  // I-4(원본 사후 발견): --cycle은 두 역할을 겸한다 — ①FR-77의 부분 동기화 필터
-  // ②--version 시 릴리즈에 묶을 연월을 찾는 열쇠. --version이 있으면 대상 자체는
-  // 필터하지 않는다(C29 — 이전 사이클 사후개정분 자동 포함).
-  const cycleFilter = args.version ? undefined : args.cycle
   const preTargets = selectTargets(changes)
-
-  const classified = await Promise.all(
+  const targets = await Promise.all(
     preTargets.map(async (t) => {
       const content = await readFile(path.join(repoRoot.root, t.path), 'utf-8')
       return { target: t, content, info: classify(t.path, content) }
     }),
   )
 
-  const targets = classified.filter(({ info }) => {
-    if (!cycleFilter) return true
-    return info.kind === 'pdca' && info.title === cycleFilter
-  })
-
-  // FR-87 — 대상이 0건이면 --version 여부와 무관하게 조용히 성공 종료한다.
-  if (targets.length === 0) {
+  // 대상이 0건이고 릴리즈도 없으면 조용히 성공 종료한다. --version이면 릴리즈 생성은 계속한다.
+  if (targets.length === 0 && !args.version) {
     console.log('변경된 문서 없음')
     return
   }
 
-  console.log(`대상 ${targets.length}건:`)
-  for (const { target, info } of targets) {
-    const stageCol = info.kind === 'pdca' ? info.stage : '-'
-    console.log(`  ${info.title}  ${stageCol}  (${target.path})`)
+  if (targets.length > 0) {
+    console.log(`대상 ${targets.length}건:`)
+    for (const { target, info } of targets) {
+      const stageCol = info.kind === 'pdca' ? info.stage : '-'
+      console.log(`  ${info.title}  ${stageCol}  (${target.path})`)
+    }
+  } else {
+    console.log('변경된 문서 없음 (릴리즈만 처리)')
   }
 
   const projectId = await resolveProjectId(api, config.projectId)
   console.log(`project=${projectId}`)
 
-  if (args.version) {
-    const yearMonth = resolveCycleYearMonth(targets, args.cycle!)
-    const result = await createCycle(api, projectId, { version: args.version, name: args.cycle!, yearMonth })
+  let cycleId: string | undefined
+  if (args.version && cycleDir) {
+    const result = await createCycle(api, projectId, { version: args.version, name: cycleDir.name, dir: cycleDir.dir })
+    cycleId = result.id
     if (result.status === 'created') {
-      console.log(`사이클: ${args.version} 생성 (${args.cycle} ${yearMonth} 연결)`)
+      console.log(`사이클: ${args.version} 생성 (${cycleDir.name}, ${cycleDir.dir})`)
     } else if (result.status === 'exists') {
       console.log(`사이클: ${args.version} 이미 존재 — 생성 생략`)
     } else {
@@ -269,6 +255,32 @@ export async function main(argv: string[]): Promise<void> {
     }
   }
 
-  console.log(`문서: 신규 ${created} / 덮어씀 ${replaced} / 실패 ${failed}`)
+  if (targets.length > 0) console.log(`문서: 신규 ${created} / 덮어씀 ${replaced} / 실패 ${failed}`)
   if (failed > 0) process.exitCode = 1
+
+  // release.md가 있으면 그 내용을 릴리즈노트로. 문서 업로드와 무관하게 폴더에 있으면 반영한다.
+  if (args.version && cycleDir) {
+    const releasePath = `${cycleDir.dir}/${cycleDir.stem}.release.md`
+    let note: string | undefined
+    try {
+      await stat(path.join(repoRoot.root, releasePath))
+      note = await readFile(path.join(repoRoot.root, releasePath), 'utf-8')
+    } catch {
+      note = undefined
+    }
+    if (!note?.trim()) {
+      console.log(`릴리즈노트: ${releasePath} 없음 — 서버 릴리즈노트는 그대로 둠`)
+    } else if (!cycleId) {
+      console.error('릴리즈노트: 사이클 id를 알 수 없어 설정하지 못함')
+      process.exitCode = 1
+    } else {
+      try {
+        await updateCycle(api, cycleId, { releaseNote: note })
+        console.log(`릴리즈노트: ${releasePath} → ${args.version}`)
+      } catch (err) {
+        console.error(`릴리즈노트 FAIL: ${err instanceof Error ? err.message : err}`)
+        process.exitCode = 1
+      }
+    }
+  }
 }

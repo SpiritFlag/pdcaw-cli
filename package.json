@@ -1,7 +1,7 @@
 {
   "name": "pdcaw",
-  "version": "0.2.0",
-  "description": "PDCA 문서를 워크스페이스 서버에 동기화하는 CLI. 본문은 파일 그대로 전송되어 LLM 컨텍스트를 통과하지 않는다.",
+  "version": "1.0.0",
+  "description": "PDCA-workspace 서버용 CLI. 문서 동기화·릴리즈·백로그를 Claude Code 스킬이 MCP 없이 다루는 유일한 통로. 본문은 파일 그대로 전송되어 LLM 컨텍스트를 통과하지 않는다.",
   "type": "module",
   "bin": {
     "pdcaw": "dist/cli.js"

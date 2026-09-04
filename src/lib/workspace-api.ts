@@ -58,28 +58,34 @@ export async function callTool(
 }
 
 /**
- * [I/O] REST 사이클 생성. 409는 target='version'일 때만 "이미 존재"다(D-58) — 재실행 시
- * 정상 경로이자 F68상 반드시 발생하는 형태. target='name'은 다른 버전에 같은 사이클명이
- * 이미 연결돼 있다는 뜻으로, 요청한 version은 생성되지 않았으므로 실패로 취급한다(I-1).
+ * [I/O] REST 사이클 생성(pdca-skill v1 계약: version · name · dir). 409는 "이미 존재"로
+ * 재실행 시 정상 경로다 — 그때는 목록에서 그 버전의 id를 찾아 돌려준다. 사이클명은
+ * 유일하지 않으므로 name 충돌 분기는 없다.
  */
 export async function createCycle(
   api: Api,
   projectId: string,
-  input: { version: string; name: string; yearMonth: string },
-): Promise<{ status: 'created' | 'exists' | 'failed'; detail?: string }> {
+  input: { version: string; name: string; dir: string },
+): Promise<{ status: 'created' | 'exists' | 'failed'; id?: string; detail?: string }> {
   const res = await fetch(`${api.baseUrl}/api/projects/${projectId}/cycles`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${api.pat}` },
     body: JSON.stringify(input),
   })
-  if (res.status === 201) return { status: 'created' }
+  if (res.status === 201) {
+    const body = (await res.json()) as { data?: { id?: string } }
+    return { status: 'created', id: body.data?.id }
+  }
   if (res.status === 409) {
-    const body = (await res.json()) as { error?: { details?: { target?: string } } }
-    if (body.error?.details?.target === 'version') return { status: 'exists' }
-    return {
-      status: 'failed',
-      detail: `버전 '${input.version}'은 생성되지 않았습니다 — 사이클명 '${input.name}'이 다른 버전에 이미 연결돼 있습니다`,
+    const list = await fetch(`${api.baseUrl}/api/projects/${projectId}/cycles`, {
+      headers: { Authorization: `Bearer ${api.pat}` },
+    })
+    if (list.ok) {
+      const body = (await list.json()) as { data?: Array<{ id: string; version: string }> }
+      const hit = body.data?.find((c) => c.version === input.version)
+      if (hit) return { status: 'exists', id: hit.id }
     }
+    return { status: 'exists' }
   }
   return { status: 'failed', detail: `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}` }
 }

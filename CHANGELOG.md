@@ -5,6 +5,52 @@ All notable changes to this project are documented here. Format loosely follows
 — a breaking change to the `.pdcarc` schema or CLI argument surface is a major bump
 (see [README.md](README.md#governance)).
 
+## v1.0.0 — 2026-09-04
+
+**Breaking**: argument surface and path convention changed for the pdca-skill v1 system.
+`pdcaw` is now the only channel Claude Code skills use to reach the server (no MCP), so it
+grew from a single `upload` command into a small suite.
+
+### Breaking
+
+- **`upload --cycle` is gone.** `--version vX.Y.Z` alone identifies the cycle: the CLI
+  looks for `docs/PDCA/*/{version}-*/` locally, derives the cycle name and folder from it,
+  and refuses to run if the folder is missing or ambiguous. Partial sync uses `--path`.
+  Passing `--cycle` now fails with a pointer to this note.
+- **New path convention** `docs/PDCA/v{N}/{version}-{cycle}/{version}-{cycle}.{stage}.md`.
+  The parser keeps a single rule (folder name == file stem, any parent path), so the old
+  `docs/PDCA/{yearMonth}/{name}/…` layout still parses (with `version: null`).
+- **Six stages**: `plan` `design` `do` `analysis` `report` `release` (was four).
+- **Cycle creation contract** is `{ version, name, dir }` (was `{ version, name, yearMonth }`).
+  Requires PDCA-workspace with the matching `cycles.dir` change. Cycle names are no longer
+  unique, so the `409 target=name` branch was removed.
+- `upload --version` now also sets the release note from `{stem}.release.md` when that
+  file exists in the cycle folder (PATCH `/api/cycles/:id`).
+
+### Added
+
+- `pdcaw project list` — workspaces and projects (for `.pdcarc.json`).
+- `pdcaw cycle list` — releases sorted by version, with `dir` and `hasReleaseNote`.
+- `pdcaw backlog list [--status a,b] [--stale <days>] [--q <text>]` — summary rows without
+  `detail` so 100+ items fit a context window. `--stale` applies to `todo` only.
+- `pdcaw backlog get <id|8+ char prefix>` — one item with `detail`.
+- `pdcaw backlog create --title --priority --opened-on [--detail | --detail-file]`.
+- `pdcaw backlog update <id> [--status] [--closed-on] [--opened-on] [--title] [--priority]
+  [--detail | --detail-file | --append-detail <text|@file>]`. `--append-detail` prepends a
+  block and keeps the existing body verbatim (the "원안 보존" rule now lives in the tool).
+  `--status todo` is refused, mirroring the MCP policy: reopening is a human decision.
+- `pdcaw doc collect --stage <s> [--major vN] --out <dir|file.md>` — local only; gathers
+  one stage across all cycles into a folder or a single concatenated file (with a path
+  comment before each document), for GUI upload pickers.
+- `--json` on every command. Skills consume only this; human tables are for eyes.
+- Question files (`*.qN.md`) left in a cycle folder are flagged during upload — they are
+  supposed to be deleted after the answer is applied.
+
+### Changed
+
+- Uploading with `--version` and no changed docs no longer exits early: the release is still
+  created and the release note applied.
+
 ## v0.2.0 — 2026-08-09
 
 **Breaking**: `PDCAW_BASE_URL` no longer has a built-in default. Now that `pdcaw` is
