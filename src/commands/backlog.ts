@@ -9,13 +9,14 @@ import {
   BACKLOG_STATUSES,
   CLI_ALLOWED_STATUS_TARGETS,
   createBacklogItem,
-  filterBacklog,
   findBacklogById,
-  listBacklog,
-  prependDetail,
+  getBacklogItem,
+  isUuid,
+  listBacklogSummary,
   updateBacklogItem,
 } from '../lib/rest.ts'
-import type { BacklogItem, BacklogPriority, BacklogStatus } from '../lib/rest.ts'
+import type { BacklogPriority, BacklogStatus, BacklogSummary } from '../lib/rest.ts'
+import type { Api } from '../lib/workspace-api.ts'
 
 const USAGE = [
   'usage: pdcaw backlog list   [--status s,...] [--stale <days>] [--q <text>] [--json]',
@@ -58,13 +59,16 @@ async function textOrFile(value: string): Promise<string> {
   return value
 }
 
-function summaryRow(it: BacklogItem): string[] {
+function summaryRow(it: BacklogSummary): string[] {
   return [it.id.slice(0, 8), it.status, it.priority, it.openedOn, it.updatedAt.slice(0, 10), it.title]
 }
 
-function summarize(it: BacklogItem) {
-  const { detail: _detail, ...rest } = it
-  return rest
+/** [I/O] 전체 uuid면 바로 단건 GET, 접두면 요약 목록에서 유일하게 좁힌 뒤 단건 GET. */
+async function resolveItem(api: Api, projectId: string, idOrPrefix: string) {
+  if (isUuid(idOrPrefix)) return getBacklogItem(api, idOrPrefix)
+  const summaries = await listBacklogSummary(api, projectId)
+  const hit = findBacklogById(summaries, idOrPrefix)
+  return getBacklogItem(api, hit.id)
 }
 
 export async function main(argv: string[]): Promise<void> {
@@ -116,22 +120,18 @@ export async function main(argv: string[]): Promise<void> {
   const ctx = await prepareContext(emit, { baseUrl: flags['base-url'], project: flags.project })
 
   if (sub === 'list') {
-    const all = await listBacklog(ctx.api, ctx.projectId)
-    const items = filterBacklog(all, {
+    // 필터·요약은 서버가 한다(pdca-skill v1 §9.2). detail은 응답에 없다 — get으로 한 건씩.
+    const items = await listBacklogSummary(ctx.api, ctx.projectId, {
       statuses: splitList(flags.status) as BacklogStatus[],
       staleDays: flags.stale !== undefined ? Number(flags.stale) : undefined,
-      query: flags.q,
+      q: flags.q,
     })
-    const rows = items.map(summarize)
-    emit.result({ total: all.length, count: items.length, items: rows }, () =>
-      `${table(items.map(summaryRow))}\n(${items.length} / 전체 ${all.length})`,
-    )
+    emit.result({ count: items.length, items }, () => `${table(items.map(summaryRow))}\n(${items.length}건)`)
     return
   }
 
   if (sub === 'get') {
-    const all = await listBacklog(ctx.api, ctx.projectId)
-    const item = findBacklogById(all, target)
+    const item = await resolveItem(ctx.api, ctx.projectId, target)
     emit.result(item, () => {
       const head = table([
         ['id', item.id],
@@ -160,8 +160,7 @@ export async function main(argv: string[]): Promise<void> {
   }
 
   // update
-  const all = await listBacklog(ctx.api, ctx.projectId)
-  const existing = findBacklogById(all, target)
+  const existing = await resolveItem(ctx.api, ctx.projectId, target)
   const patch: Record<string, unknown> = {}
   if (flags.status) patch.status = flags.status
   if (flags['closed-on']) patch.closedOn = flags['closed-on']
@@ -170,10 +169,8 @@ export async function main(argv: string[]): Promise<void> {
   if (flags.priority) patch.priority = flags.priority
   if (flags.detail !== undefined) patch.detail = flags.detail
   if (flags['detail-file']) patch.detail = await readFile(flags['detail-file'], 'utf-8')
-  if (flags['append-detail'] !== undefined) {
-    const block = await textOrFile(flags['append-detail'])
-    patch.detail = prependDetail(existing.detail, block)
-  }
+  // appendDetail은 서버가 기존 본문 앞에 얹는다 — 클라이언트가 원안을 읽어 재조립하지 않는다.
+  if (flags['append-detail'] !== undefined) patch.appendDetail = await textOrFile(flags['append-detail'])
   if (flags.status && ['done', 'resolved', 'dropped'].includes(flags.status) && !flags['closed-on'] && !existing.closedOn) {
     emit.log(`  warn  ${flags.status} 전환인데 --closed-on 이 없습니다 (처리일이 비어 있음)`)
   }

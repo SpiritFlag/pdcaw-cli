@@ -39,12 +39,14 @@ grew from a single `upload` command into a small suite.
 - `pdcaw project list` — workspaces and projects (for `.pdcarc.json`).
 - `pdcaw cycle list` — releases sorted by version, with `dir` and `hasReleaseNote`.
 - `pdcaw backlog list [--status a,b] [--stale <days>] [--q <text>]` — summary rows without
-  `detail` so 100+ items fit a context window. `--stale` applies to `todo` only.
+  `detail` so 100+ items fit a context window. `--stale` applies to `todo` only. Filtering and
+  summarizing happen server-side (`GET …/backlog/summary?status&stale&q`).
 - `pdcaw backlog get <id|8+ char prefix>` — one item with `detail`.
 - `pdcaw backlog create --title --priority --opened-on [--detail | --detail-file]`.
 - `pdcaw backlog update <id> [--status] [--closed-on] [--opened-on] [--title] [--priority]
   [--detail | --detail-file | --append-detail <text|@file>]`. `--append-detail` prepends a
-  block and keeps the existing body verbatim (the "원안 보존" rule now lives in the tool).
+  block and keeps the existing body verbatim — sent as `appendDetail`, so the server owns the
+  "원안 보존" rule and no read-modify-write happens on the client.
   `--status todo` is refused, mirroring the MCP policy: reopening is a human decision.
 - `pdcaw doc collect --stage <s> [--major vN] --out <dir|file.md>` — local only; gathers
   one stage across all cycles into a folder or a single concatenated file (with a path

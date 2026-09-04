@@ -120,8 +120,30 @@ export const CLI_ALLOWED_STATUS_TARGETS: BacklogStatus[] = ['doing', 'done', 're
 
 // ── 백로그 ──────────────────────────────────────────────────────────────────
 
-export function listBacklog(api: Api, projectId: string) {
-  return restOrThrow<BacklogItem[]>(api, 'GET', `/projects/${projectId}/backlog`)
+export type BacklogSummary = Omit<BacklogItem, 'detail'>
+export type BacklogListParams = { statuses?: BacklogStatus[]; staleDays?: number; q?: string }
+
+function backlogQuery(p: BacklogListParams): string {
+  const qs = new URLSearchParams()
+  if (p.statuses && p.statuses.length > 0) qs.set('status', p.statuses.join(','))
+  if (p.staleDays !== undefined) qs.set('stale', String(p.staleDays))
+  if (p.q) qs.set('q', p.q)
+  const s = qs.toString()
+  return s ? `?${s}` : ''
+}
+
+/** 전체 행(detail 포함). 서버가 status·stale·q를 거른다(pdca-skill v1 §9.2). */
+export function listBacklog(api: Api, projectId: string, p: BacklogListParams = {}) {
+  return restOrThrow<BacklogItem[]>(api, 'GET', `/projects/${projectId}/backlog${backlogQuery(p)}`)
+}
+
+/** 요약 행(detail 없음). 100건이 넘어도 컨텍스트에 들어온다. */
+export function listBacklogSummary(api: Api, projectId: string, p: BacklogListParams = {}) {
+  return restOrThrow<BacklogSummary[]>(api, 'GET', `/projects/${projectId}/backlog/summary${backlogQuery(p)}`)
+}
+
+export function getBacklogItem(api: Api, id: string) {
+  return restOrThrow<BacklogItem>(api, 'GET', `/backlog/${id}`)
 }
 
 export function createBacklogItem(
@@ -132,7 +154,12 @@ export function createBacklogItem(
   return restOrThrow<BacklogItem>(api, 'POST', `/projects/${projectId}/backlog`, input)
 }
 
-export function updateBacklogItem(api: Api, id: string, patch: Partial<Omit<BacklogItem, 'id' | 'projectId'>>) {
+/** PATCH. appendDetail은 서버가 기존 detail 앞에 블록을 얹는다(원안 보존을 서버가 책임). */
+export function updateBacklogItem(
+  api: Api,
+  id: string,
+  patch: Partial<Omit<BacklogItem, 'id' | 'projectId'>> & { appendDetail?: string },
+) {
   return restOrThrow<BacklogItem>(api, 'PATCH', `/backlog/${id}`, patch)
 }
 
@@ -148,36 +175,14 @@ export function updateCycle(api: Api, id: string, patch: { releaseNote?: string;
 
 // ── 순수 헬퍼(테스트 대상) ──────────────────────────────────────────────────
 
-export type BacklogFilter = { statuses?: BacklogStatus[]; staleDays?: number; query?: string; now?: Date }
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-/** [순수] 상태 · 정체 일수 · 부분일치로 거른다. 정체는 todo에만 적용(열린 것이 썩는 문제라서). */
-export function filterBacklog(items: BacklogItem[], f: BacklogFilter): BacklogItem[] {
-  const now = f.now ?? new Date()
-  const q = f.query?.toLowerCase()
-  return items.filter((it) => {
-    if (f.statuses && f.statuses.length > 0 && !f.statuses.includes(it.status)) return false
-    if (f.staleDays !== undefined) {
-      if (it.status !== 'todo') return false
-      const ageDays = (now.getTime() - new Date(it.updatedAt).getTime()) / 86_400_000
-      if (ageDays < f.staleDays) return false
-    }
-    if (q) {
-      const hay = `${it.title}\n${it.detail ?? ''}`.toLowerCase()
-      if (!hay.includes(q)) return false
-    }
-    return true
-  })
-}
-
-/** [순수] detail 맨 앞에 블록을 얹고 기존 본문을 그대로 뒤에 붙인다. 원안은 지워지지 않는다. */
-export function prependDetail(existing: string | null | undefined, block: string): string {
-  const head = block.trimEnd()
-  const tail = (existing ?? '').trim()
-  return tail ? `${head}\n\n${tail}` : head
+export function isUuid(s: string): boolean {
+  return UUID_RE.test(s)
 }
 
 /** [순수] id 또는 id 접두(8자 이상)로 한 건을 찾는다. 0건 · 2건 이상이면 에러. */
-export function findBacklogById(items: BacklogItem[], idOrPrefix: string): BacklogItem {
+export function findBacklogById<T extends { id: string; title: string }>(items: T[], idOrPrefix: string): T {
   const exact = items.find((it) => it.id === idOrPrefix)
   if (exact) return exact
   if (idOrPrefix.length < 8) throw new Error(`id는 전체 uuid 또는 8자 이상 접두여야 합니다: ${idOrPrefix}`)
