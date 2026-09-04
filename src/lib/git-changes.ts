@@ -71,10 +71,16 @@ async function runGit(repoRoot: string, args: string[]): Promise<string> {
  */
 export async function detectChangedDocs(
   repoRoot: string,
+  options: { excludeTag?: string } = {},
 ): Promise<{ baseTag: string; changes: ChangedPath[] }> {
   let baseTag: string
   try {
-    baseTag = (await runGit(repoRoot, ['describe', '--tags', '--abbrev=0'])).trim()
+    // excludeTag: `upload --version vX`가 vX 태그를 이미 찍은 뒤 실행되면 그 태그가 기준선이
+    // 되어 diff가 비어 버린다(close 절차는 태그 → 업로드 순). 이번 릴리즈 태그는 기준선에서
+    // 뺀다 — 그러면 태그 전후 어느 순서로 실행해도 "직전 릴리즈 이후 변경분"이 나온다.
+    const args = ['describe', '--tags', '--abbrev=0']
+    if (options.excludeTag) args.push(`--exclude=${options.excludeTag}`)
+    baseTag = (await runGit(repoRoot, args)).trim()
   } catch {
     throw new GitDetectionError(
       '최신 태그를 찾을 수 없습니다 (git 저장소가 아니거나 태그가 없음). --all 또는 --path로 대상을 지정하세요.',

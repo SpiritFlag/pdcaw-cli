@@ -26,6 +26,13 @@ grew from a single `upload` command into a small suite.
   unique, so the `409 target=name` branch was removed.
 - `upload --version` now also sets the release note from `{stem}.release.md` when that
   file exists in the cycle folder (PATCH `/api/cycles/:id`).
+- **`--version` combines with `--path`** (was mutually exclusive). This is the backfill
+  path: `upload --version v0.1.1 --path docs/PDCA/v0/v0.1.1-x` creates the release and
+  uploads only that folder, so retroactive releases no longer re-send every changed doc.
+  `--path` and `--all` remain mutually exclusive.
+- **The baseline tag excludes `--version`'s own tag.** If `v1.2.0` is already tagged at
+  HEAD when `upload --version v1.2.0` runs (the close procedure tags first), the previous
+  release is used as the baseline instead of an empty diff. Uses `git describe --exclude`.
 
 ### Added
 

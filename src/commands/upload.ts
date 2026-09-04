@@ -13,11 +13,13 @@ import { callTool, createCycle, resolveProjectId } from '../lib/workspace-api.ts
 import type { Api } from '../lib/workspace-api.ts'
 
 const USAGE =
-  'usage: pdcaw upload [--version vX.Y.Z] [--all]\n' +
-  '                    [--path <파일|폴더>]... [--project <uuid>] [--base-url <url>]\n' +
+  'usage: pdcaw upload [--version vX.Y.Z] [--all | --path <파일|폴더>...]\n' +
+  '                    [--project <uuid>] [--base-url <url>]\n' +
   '\n' +
   '  --version: docs/PDCA/*/{version}-*/ 폴더를 찾아 릴리즈를 만들고(있으면 재사용),\n' +
-  '             변경 문서를 올린 뒤 그 폴더의 *.release.md를 릴리즈노트로 설정한다.'
+  '             변경 문서를 올린 뒤 그 폴더의 *.release.md를 릴리즈노트로 설정한다.\n' +
+  '             기준선은 이 버전을 제외한 최신 태그 — 태그 전후 어느 순서로 실행해도 된다.\n' +
+  '  --version --path: 소급 릴리즈. 지정 경로만 올리고 릴리즈를 만든다(중복 전송 없음).'
 
 export class UsageError extends Error {}
 
@@ -71,9 +73,10 @@ export function parseArgs(argv: string[]): Args {
   if (args.version && !isVersion(args.version)) {
     fail(`--version은 v0.1.0 형식이어야 합니다: ${args.version}`)
   }
-  // --path는 완전 배타. 조합이 필요해지면 나중에 허용으로 푼다(역방향은 호환 파괴).
-  if (args.path.length > 0 && (args.all || args.version)) {
-    fail(`--path는 --all/--version과 함께 쓸 수 없습니다\n${USAGE}`)
+  // --path와 --all은 대상 선정 방식이라 배타. --version은 릴리즈 처리라 어느 쪽과도 조합된다
+  // (--version + --path = 소급 릴리즈: 그 폴더만 올린다).
+  if (args.path.length > 0 && args.all) {
+    fail(`--path는 --all과 함께 쓸 수 없습니다\n${USAGE}`)
   }
   return args
 }
@@ -160,7 +163,7 @@ export async function main(argv: string[]): Promise<void> {
       changes = result.changes
       skipped = result.skipped
     } else {
-      const result = await resolveTargets(repoRoot.root, cwd, { mode: 'git' })
+      const result = await resolveTargets(repoRoot.root, cwd, { mode: 'git', excludeTag: args.version })
       changes = result.changes
       baseTag = result.baseTag
       skipped = result.skipped

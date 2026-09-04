@@ -13,7 +13,7 @@ through an LLM context.
 ## Commands
 
 ```
-pdcaw upload   [--version vX.Y.Z] [--all] [--path <file|dir>]...
+pdcaw upload   [--version vX.Y.Z] [--all | --path <file|dir>...]
 pdcaw project  list
 pdcaw cycle    list
 pdcaw backlog  list   [--status s,...] [--stale <days>] [--q <text>]
@@ -31,14 +31,18 @@ Every command accepts `--json` (structured stdout; progress goes to stderr) and
 
 With no flags, uploads everything under `docs/` that changed since the latest git tag
 (committed diff ∪ working tree). `--all` scans `docs/` without git; `--path` uploads exactly
-the given files/folders and is mutually exclusive with the other two.
+the given files/folders. `--all` and `--path` are mutually exclusive.
 
 `--version vX.Y.Z` is the release step of `pdca-close`:
 
 1. finds the cycle folder `docs/PDCA/*/{version}-*/` locally (fails if missing or ambiguous),
 2. creates the release on the server with `{ version, name, dir }` (reuses it if it exists),
-3. uploads the changed docs,
+3. uploads the changed docs — the baseline is the latest tag **excluding `vX.Y.Z` itself**,
+   so it works whether you run it before or after tagging,
 4. if `{stem}.release.md` exists in that folder, sets it as the release note.
+
+`--version` with `--path` is the backfill form: it creates the release and uploads only the
+given paths, so registering old cycles one by one never re-sends the same docs.
 
 ### Path convention
 

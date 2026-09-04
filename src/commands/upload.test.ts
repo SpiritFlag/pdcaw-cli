@@ -28,8 +28,12 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['--cycle', 'x'])).toThrow(/--cycle 은 없어졌습니다/)
   })
 
-  it('a7: --path + --version 조합은 배타 에러', () => {
-    expect(() => parseArgs(['--path', 'a.md', '--version', 'v0.1.0'])).toThrow(UsageError)
+  it('a7: --path + --version 조합은 소급 릴리즈로 허용된다', () => {
+    expect(parseArgs(['--path', 'a.md', '--version', 'v0.1.0'])).toEqual({
+      all: false,
+      path: ['a.md'],
+      version: 'v0.1.0',
+    })
   })
 
   it('a8: --path 단독 또는 다른 옵션과의 조합(비배타 옵션)은 허용된다', () => {
