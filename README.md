@@ -1,54 +1,79 @@
 # pdcaw
 
-Sync PDCA documents (and any other Markdown under `docs/`) from a project repo to a
-PDCA-workspace server. File contents are read straight from disk and sent as-is — they
-never pass through an LLM context, so uploading a batch of design docs costs no tokens
-and introduces no risk of retyping errors.
+CLI for a self-hosted [PDCA-workspace](https://github.com/SpiritFlag/PDCA-workspace) server.
+It syncs Markdown docs under `docs/`, creates releases, and reads/writes the backlog. It is
+the only channel the [pdca-skill](https://github.com/SpiritFlag/PDCA-skill) Claude Code
+skills use to reach the server, so they work without MCP (e.g. on accounts that cannot
+attach connectors). Document bodies are read from disk and sent as-is; they never pass
+through an LLM context.
 
-> **This is a client for a self-hosted [PDCA-workspace](https://github.com/SpiritFlag/PDCA-workspace)
-> server — not a general-purpose upload tool.** Installing it gets you nothing without
-> your own server instance and a PAT issued by that server. There is no built-in default
-> server; `PDCAW_BASE_URL` must be set explicitly.
+> **Not a general-purpose tool.** It needs your own server instance and a PAT issued by
+> it. There is no default server; `PDCAW_BASE_URL` must be set.
 
-## Usage
-
-No install needed — run it with `npx`:
-
-```bash
-npx pdcaw upload --cycle my-feature --version v0.1.0
-```
+## Commands
 
 ```
-usage: pdcaw upload [--cycle <name>] [--version vX.Y.Z] [--all]
-                     [--path <file|dir>]... [--project <uuid>] [--base-url <url>]
+pdcaw upload   [--version vX.Y.Z] [--all | --path <file|dir>...]
+pdcaw project  list
+pdcaw cycle    list
+pdcaw backlog  list   [--status s,...] [--stale <days>] [--q <text>]
+pdcaw backlog  get    <id|8+ char prefix>
+pdcaw backlog  create --title <t> --priority <p> --opened-on <YYYY-MM-DD> [--detail <t> | --detail-file <f>]
+pdcaw backlog  update <id> [--status s] [--closed-on d] [--opened-on d] [--title t] [--priority p]
+                           [--detail <t> | --detail-file <f> | --append-detail <t|@file>]
+pdcaw doc      collect --stage <plan|design|do|analysis|report|release> [--major vN] --out <dir|file.md>
 ```
 
-| Flag | Meaning |
-|------|---------|
-| `--cycle <name>` | Filter to one PDCA cycle (alone), or the cycle to attach a release to (with `--version`) |
-| `--version vX.Y.Z` | Create a release and sync **all** of `docs/` (requires `--cycle`) |
-| `--all` | Scan all of `docs/` without consulting git |
-| `--path <file\|dir>` | Upload exactly the given file(s)/folder(s), bypassing git detection entirely. Repeatable. Mutually exclusive with `--all`/`--cycle`/`--version` |
-| `--project <uuid>` | Override the resolved project id |
-| `--base-url <url>` | Override the resolved server URL |
+Every command accepts `--json` (structured stdout; progress goes to stderr) and
+`--project <uuid>` / `--base-url <url>` overrides. `pdcaw <command> --help` prints details.
 
-With no flags, it uploads everything under `docs/` that changed since the latest git tag
-(committed diff ∪ working tree). Non-`.md` files and files outside `docs/` are ignored.
+### upload
 
-PDCA-shaped paths (`docs/PDCA/{yearMonth}/{name}/{name}.{plan,design,analysis,report}.md`)
-are uploaded as `kind: "pdca"`, title = cycle name. Every other `.md` under `docs/` is
-uploaded as `kind: "general"`, title = the document's first heading (any level, front
-matter and code fences ignored) or its filename if it has no heading.
+With no flags, uploads everything under `docs/` that changed since the latest git tag
+(committed diff ∪ working tree). `--all` scans `docs/` without git; `--path` uploads exactly
+the given files/folders. `--all` and `--path` are mutually exclusive.
+
+`--version vX.Y.Z` is the release step of `pdca-close`:
+
+1. finds the cycle folder `docs/PDCA/*/{version}-*/` locally (fails if missing or ambiguous),
+2. creates the release on the server with `{ version, name, dir }` (reuses it if it exists),
+3. uploads the changed docs — the baseline is the latest tag **excluding `vX.Y.Z` itself**,
+   so it works whether you run it before or after tagging,
+4. if `{stem}.release.md` exists in that folder, sets it as the release note.
+
+`--version` with `--path` is the backfill form: it creates the release and uploads only the
+given paths, so registering old cycles one by one never re-sends the same docs.
+
+### Path convention
+
+```
+docs/PDCA/v1/v1.2.0-enhance-lyric-sync/v1.2.0-enhance-lyric-sync.{plan,design,do,analysis,report,release}.md
+```
+
+The parser has one rule: **folder name == file stem**. The parent path is free, so the older
+`docs/PDCA/2026-08/{name}/{name}.{stage}.md` layout still uploads (as a cycle without a
+version prefix). Anything else under `docs/` is uploaded as `kind: "general"` with the first
+heading as title.
+
+### backlog
+
+`list` returns summary rows (no `detail`) so large boards fit in a context window; `get`
+returns one item with `detail`. `--stale <days>` keeps `todo` items untouched for at least
+that long. `--append-detail` prepends a block and keeps the existing body verbatim.
+
+`--status todo` is refused on purpose: reopening or reworking an item is a human decision
+made in the web UI. Allowed targets are `doing | done | resolved | dropped`.
+
+### doc collect
+
+Local only. Gathers one stage across all cycles, sorted by version, into a folder
+(`--out some/dir`) or one concatenated file (`--out all-reports.md`, each document preceded
+by an HTML comment with its path). Useful when a GUI file picker cannot select across folders.
 
 ## Setup
 
-**1. Get a PAT.** Issue one from the server's `/tokens` page (shown once, at issue time)
-and put it in `.env.local` at your repo root — `pdcaw` loads that file automatically:
-
-```bash
-cp .env.local.example .env.local
-# then edit .env.local
-```
+**1. Get a PAT.** Issue one from the server's `/settings/tokens` page (shown once) and put it
+in `.env.local` at your repo root — `pdcaw` loads that file automatically:
 
 ```
 PDCAW_PAT=pdcaw_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -56,14 +81,10 @@ PDCAW_PROJECT_ID=00000000-0000-0000-0000-000000000000   # optional
 PDCAW_BASE_URL=https://your-pdca-workspace.example.com    # required, no default
 ```
 
-A PAT is tied to one server (Neon branch) — a token issued on dev won't authenticate
-against prod, and vice versa.
+A PAT is tied to one server (Neon branch) — a token issued on dev won't authenticate against
+prod, and vice versa.
 
-**2. Optionally add `.pdcarc.json`** at your repo root (safe to commit — no secrets):
-
-```bash
-cp .pdcarc.example.json .pdcarc.json
-```
+**2. Add `.pdcarc.json`** at your repo root (safe to commit — no secrets):
 
 ```json
 {
@@ -72,21 +93,18 @@ cp .pdcarc.example.json .pdcarc.json
 }
 ```
 
-**Resolution order**: CLI flag > `PDCAW_*` env var > `.pdcarc.json`. There is no built-in
-default for `baseUrl` — if it's missing from all three sources, `pdcaw` exits with a
-config error instead of guessing. `projectId` is the only field that falls back further,
-to auto-detection via the server's project list when exactly one project is accessible.
+`pdcaw project list` prints the ids to paste here.
 
-The PAT itself is **never** read from `.pdcarc.json` — only `PDCAW_PAT`. If `.pdcarc.json`
-contains a `pat`/`token` key it is ignored with a warning, and its value is never printed.
+**Resolution order**: CLI flag > `PDCAW_*` env var > `.pdcarc.json`. `baseUrl` has no
+default. `projectId` falls back to auto-detection when exactly one project is accessible.
+The PAT is never read from `.pdcarc.json`; a `pat`/`token` key there is ignored with a warning.
 
-## Governance
+## Server compatibility
 
-This repo runs on two change tracks: ordinary patches go through backlog → commit → tag
-→ CHANGELOG directly; only **structural** changes (`.pdcarc` schema, the CLI argument
-surface, the upload protocol) go through a full PDCA cycle
-(see [`docs/RULE.md`](docs/RULE.md)). Releases follow semver — a breaking change to the
-config schema or argument surface is a major bump.
+| pdcaw | PDCA-workspace |
+|---|---|
+| 1.x | requires `cycles.dir` and the six-stage enum (pdca-skill v1 overhaul) |
+| 0.x | four-stage enum, `cycles.yearMonth` |
 
 ## Development
 
@@ -96,3 +114,6 @@ npm run build   # tsc -> dist/
 npm test        # vitest
 npm run lint    # oxlint
 ```
+
+Releases follow semver; a breaking change to the config schema or argument surface is a
+major bump. See [CHANGELOG.md](CHANGELOG.md).

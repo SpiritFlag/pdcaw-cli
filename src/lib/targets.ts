@@ -83,7 +83,7 @@ export async function resolvePathTargets(
 }
 
 export type TargetMode =
-  | { mode: 'git' }
+  | { mode: 'git'; excludeTag?: string }
   | { mode: 'all' }
   | { mode: 'path'; paths: string[] }
 
@@ -101,7 +101,7 @@ export async function resolveTargets(
     const { targets, skipped } = await resolvePathTargets(repoRoot, cwd, mode.paths)
     return { changes: targets, skipped }
   }
-  const { baseTag, changes } = await detectChangedDocs(repoRoot)
+  const { baseTag, changes } = await detectChangedDocs(repoRoot, { excludeTag: mode.excludeTag })
   return { changes, baseTag, skipped: [] }
 }
 
